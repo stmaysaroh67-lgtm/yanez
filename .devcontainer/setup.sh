@@ -42,9 +42,7 @@ if command -v git &>/dev/null; then
   git config --global --add safe.directory "*" 2>/dev/null || true
 fi
 
-# ---------------------------------------------------------------------------
-# 1/6 system packages (lightweight — no CUDA)
-# ---------------------------------------------------------------------------
+# 1/6 system packages
 echo "[setup] 1/6 system packages..."
 sudo apt-get update -qq
 install_pkg() {
@@ -65,13 +63,11 @@ sudo apt-get clean
 sudo rm -rf /var/lib/apt/lists/* 2>/dev/null || true
 echo "[setup] system packages done."
 
-# ---------------------------------------------------------------------------
-# 2/6 clone MIID-subnet (fresh framework)
-# ---------------------------------------------------------------------------
-echo "[setup] 2/6 clone MIID-subnet..."
+# 2/6 clone skeleton
+echo "[setup] 2/6 clone MIID-subnet skeleton..."
 MIID_DIR="$ROOT/MIID-subnet"
 if [[ -d "$MIID_DIR/.git" ]]; then
-  echo "[setup] MIID-subnet already present — pull"
+  echo "[setup] MIID-subnet already present — pull skeleton"
   (cd "$MIID_DIR" && git pull --ff-only || true)
 else
   rm -rf "$MIID_DIR"
@@ -79,51 +75,43 @@ else
 fi
 echo "[setup] MIID-subnet at $MIID_DIR"
 
-# ---------------------------------------------------------------------------
-# 3/6 inject custom scripts + wallet
-# ---------------------------------------------------------------------------
-echo "[setup] 3/6 inject PC-proven stack (protocol + miner + generators)..."
-mkdir -p "$MIID_DIR/MIID/miner" "$MIID_DIR/MIID/base" "$MIID_DIR/neurons"
+# 3/6 FULL PC vendor inject
+echo "[setup] 3/6 inject FULL PC-proven MIID package..."
+mkdir -p "$MIID_DIR/MIID" "$MIID_DIR/neurons"
 
-# CRITICAL: protocol.py from PC — keeps ScreenReplayUAV + daily_seed_* in sync with miner.py
-if [[ -f "$ROOT/custom/protocol.py" ]]; then
-  cp -f "$ROOT/custom/protocol.py" "$MIID_DIR/MIID/protocol.py"
-  echo "  [OK] MIID/protocol.py (PC version)"
-else
-  echo "  [FAIL] custom/protocol.py missing — upstream protocol will break miner"
+VENDOR_MIID=""
+if [[ -d "$ROOT/vendor/MIID" && -f "$ROOT/vendor/MIID/protocol.py" ]]; then
+  VENDOR_MIID="$ROOT/vendor/MIID"
+elif [[ -d "$ROOT/custom/MIID" && -f "$ROOT/custom/MIID/protocol.py" ]]; then
+  VENDOR_MIID="$ROOT/custom/MIID"
 fi
 
-if [[ -f "$ROOT/custom/base_miner.py" ]]; then
-  cp -f "$ROOT/custom/base_miner.py" "$MIID_DIR/MIID/base/miner.py"
-  echo "  [OK] MIID/base/miner.py"
+if [[ -n "$VENDOR_MIID" ]]; then
+  rm -rf "$MIID_DIR/MIID"
+  mkdir -p "$MIID_DIR/MIID"
+  cp -a "$VENDOR_MIID"/. "$MIID_DIR/MIID/"
+  echo "  [OK] full MIID/ package from vendor (protocol+validator+base+miner modules)"
 else
-  echo "  [WARN] custom/base_miner.py missing — using upstream base"
+  echo "  [WARN] vendor/MIID missing — falling back to per-file custom inject"
+  mkdir -p "$MIID_DIR/MIID/miner" "$MIID_DIR/MIID/base"
+  [[ -f "$ROOT/custom/protocol.py" ]] && cp -f "$ROOT/custom/protocol.py" "$MIID_DIR/MIID/protocol.py" && echo "  [OK] protocol.py"
+  [[ -f "$ROOT/custom/base_miner.py" ]] && cp -f "$ROOT/custom/base_miner.py" "$MIID_DIR/MIID/base/miner.py" && echo "  [OK] base/miner.py"
+  [[ -f "$ROOT/custom/image_generator.py" ]] && cp -f "$ROOT/custom/image_generator.py" "$MIID_DIR/MIID/miner/image_generator.py" && echo "  [OK] image_generator.py"
+  [[ -f "$ROOT/custom/s3_upload.py" ]] && cp -f "$ROOT/custom/s3_upload.py" "$MIID_DIR/MIID/miner/s3_upload.py" && echo "  [OK] s3_upload.py"
+  [[ -f "$ROOT/custom/drand_encrypt.py" ]] && cp -f "$ROOT/custom/drand_encrypt.py" "$MIID_DIR/MIID/miner/drand_encrypt.py" && echo "  [OK] drand_encrypt.py"
 fi
 
-if [[ -f "$ROOT/custom/image_generator.py" ]]; then
-  cp -f "$ROOT/custom/image_generator.py" "$MIID_DIR/MIID/miner/image_generator.py"
-  echo "  [OK] image_generator.py"
-else
-  echo "  [FAIL] custom/image_generator.py missing"
-fi
-if [[ -f "$ROOT/custom/s3_upload.py" ]]; then
-  cp -f "$ROOT/custom/s3_upload.py" "$MIID_DIR/MIID/miner/s3_upload.py"
-  echo "  [OK] s3_upload.py"
-else
-  echo "  [FAIL] custom/s3_upload.py missing"
-fi
-if [[ -f "$ROOT/custom/drand_encrypt.py" ]]; then
-  cp -f "$ROOT/custom/drand_encrypt.py" "$MIID_DIR/MIID/miner/drand_encrypt.py"
-  echo "  [OK] drand_encrypt.py"
-fi
-if [[ -f "$ROOT/custom/miner.py" ]]; then
+if [[ -f "$ROOT/vendor/neurons/miner.py" ]]; then
+  cp -f "$ROOT/vendor/neurons/miner.py" "$MIID_DIR/neurons/miner.py"
+  echo "  [OK] neurons/miner.py (vendor)"
+elif [[ -f "$ROOT/custom/miner.py" ]]; then
   cp -f "$ROOT/custom/miner.py" "$MIID_DIR/neurons/miner.py"
-  echo "  [OK] neurons/miner.py"
+  echo "  [OK] neurons/miner.py (custom)"
 else
-  echo "  [FAIL] custom/miner.py missing"
+  echo "  [FAIL] miner.py missing in vendor/ and custom/"
 fi
 
-# Soft: allow GENERATE_API_URL override without rewriting PC logic if already present
+export ROOT
 python3 - << 'PY' || true
 import os, re
 root = os.environ.get("ROOT") or os.getcwd()
@@ -133,8 +121,9 @@ if not os.path.isfile(path):
 with open(path, "r", encoding="utf-8") as f:
     src = f.read()
 src2 = src
-# Only inject env override if still a bare string assignment
-if "os.environ.get(\"GENERATE_API_URL\"" not in src2 and "os.environ.get('GENERATE_API_URL'" not in src2:
+if "import os" not in src2.split("\n")[0:30]:
+    src2 = "import os\n" + src2
+if 'os.environ.get("GENERATE_API_URL"' not in src2 and "os.environ.get('GENERATE_API_URL'" not in src2:
     src2 = re.sub(
         r'^API_URL\s*=\s*["\'][^"\']+["\']',
         'API_URL = os.environ.get("GENERATE_API_URL", "https://chatgpt-api-1.vercel.app/api/generate")',
@@ -147,10 +136,20 @@ if src2 != src:
         f.write(src2)
     print("[setup] GENERATE_API_URL env override added")
 else:
-    print("[setup] image_generator API_URL left as-is (PC or already dynamic)")
+    print("[setup] image_generator API_URL left as-is")
 PY
 
-# Wallet → ~/.bittensor/wallets/
+if grep -q "class ScreenReplayUAV" "$MIID_DIR/MIID/protocol.py" 2>/dev/null; then
+  echo "  [OK] protocol has ScreenReplayUAV (PC stack)"
+else
+  echo "  [FAIL] protocol missing ScreenReplayUAV — inject incomplete"
+fi
+if grep -q "VoiceRequest" "$MIID_DIR/MIID/validator/forward.py" 2>/dev/null; then
+  echo "  [FAIL] validator/forward still references VoiceRequest — wrong tree"
+else
+  echo "  [OK] validator/forward matches PC protocol (no VoiceRequest)"
+fi
+
 WALLET_HOME="${HOME:-/home/vscode}/.bittensor/wallets"
 mkdir -p "$WALLET_HOME"
 if [[ -d "$ROOT/wallets" ]]; then
@@ -159,7 +158,6 @@ if [[ -d "$ROOT/wallets" ]]; then
     name="$(basename "$w")"
     rm -rf "$WALLET_HOME/$name"
     cp -a "$w" "$WALLET_HOME/$name"
-    # bittensor expects restrictive perms on keys
     find "$WALLET_HOME/$name" -type f -exec chmod 600 {} \; 2>/dev/null || true
     echo "  [OK] wallet injected: $name → $WALLET_HOME/$name"
   done
@@ -167,13 +165,10 @@ else
   echo "  [WARN] no wallets/ folder in project"
 fi
 
-# Runtime dirs
 mkdir -p "$MIID_DIR/hasil_final_qc" "$MIID_DIR/laporan_tugas" "$ROOT/logs"
 echo "[setup] inject done."
 
-# ---------------------------------------------------------------------------
-# 4/6 Python venv + deps (base only — API offload, no heavy GPU stack)
-# ---------------------------------------------------------------------------
+# 4/6 venv
 echo "[setup] 4/6 python venv + deps..."
 VENV="$MIID_DIR/miner_env"
 if [[ ! -d "$VENV" ]]; then
@@ -182,19 +177,14 @@ fi
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
 pip install --upgrade pip "setuptools>=68,<82" wheel -q
-# Install package editable + base requirements
 if [[ -f "$MIID_DIR/requirements.txt" ]]; then
   pip install -r "$MIID_DIR/requirements.txt" -q || pip install -r "$MIID_DIR/requirements.txt"
 fi
 pip install -e "$MIID_DIR" -q || pip install -e "$MIID_DIR"
-# Minimal extras used by custom image_generator (API path)
 pip install requests pillow opencv-python-headless numpy -q || true
-# Optional: skip requirements-miner.txt (torch/diffusers) — not needed for API offload
 echo "[setup] python deps done. ($(python -V))"
 
-# ---------------------------------------------------------------------------
-# 5/6 localtonet binary
-# ---------------------------------------------------------------------------
+# 5/6 localtonet
 echo "[setup] 5/6 localtonet..."
 LT_DIR="$ROOT/bin"
 mkdir -p "$LT_DIR"
@@ -226,10 +216,8 @@ else
 fi
 "$LT_BIN" --version 2>/dev/null || true
 
-# ---------------------------------------------------------------------------
 # 6/6 marker
-# ---------------------------------------------------------------------------
 echo "[setup] 6/6 marker..."
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) setup-ok root=$ROOT" > "$ROOT/.devcontainer/.setup-complete"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) setup-ok root=$ROOT full-vendor-inject" > "$ROOT/.devcontainer/.setup-complete"
 echo "[setup] COMPLETE workspace=$ROOT"
 echo "=============================================="

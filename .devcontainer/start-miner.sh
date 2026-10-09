@@ -70,7 +70,9 @@ echo "[start] --- gate ---"
 [[ -f "$ROOT/custom/image_generator.py" ]] && ok "custom/image_generator.py" || bad "custom/image_generator.py"
 [[ -f "$ROOT/custom/s3_upload.py" ]] && ok "custom/s3_upload.py" || bad "custom/s3_upload.py"
 [[ -f "$ROOT/custom/miner.py" ]] && ok "custom/miner.py" || bad "custom/miner.py"
-[[ -f "$ROOT/custom/protocol.py" ]] && ok "custom/protocol.py" || bad "custom/protocol.py"
+if [[ -f "$ROOT/vendor/MIID/protocol.py" ]]; then ok "vendor/MIID/protocol.py"
+elif [[ -f "$ROOT/custom/protocol.py" ]]; then ok "custom/protocol.py"
+else bad "vendor/MIID/protocol.py or custom/protocol.py"; fi
 [[ -f "$ROOT/.env" ]] && ok ".env" || bad ".env"
 
 # Injected framework (must include PC protocol, not bare upstream)
